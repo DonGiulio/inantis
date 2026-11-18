@@ -1,0 +1,11 @@
+{
+  "name": "inantis",
+  "owner": { "name": "inantis" },
+  "description": "Inantis code review plugin",
+  "plugins": [
+    {
+      "name": "inantis",
+      "source": "./"
+    }
+  ]
+}
