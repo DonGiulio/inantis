@@ -2,6 +2,7 @@
 
 ## 0.1.2
 
+- Show comparison source and base on separate horizontally scrollable rows.
 - Show the current branch before the comparison reference, matching the direction of a merge request.
 - Set the comparison target at startup with `--base`.
 - Keep comparison controls aligned when branch names are long.

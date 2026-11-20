@@ -16,7 +16,7 @@ export const en = {
   agent: 'Agent', generalDiscussion: 'General discussion', newDiscussion: 'New general discussion', expandResolvedDiscussion: 'Expand resolved discussion', collapseDiscussion: 'Collapse discussion',
   outdatedDiscussions: 'Discussions on files outside this diff',
   uncommitted: 'Contains uncommitted changes', branchFallback: 'The branch start could not be determined. Showing local changes only; choose a reference to review the full branch.',
-  workingTree: 'working tree',
+  workingTree: 'working tree', comparisonSource: 'Source:', comparisonBase: 'Base:',
   branchAtBase: 'Branch pointing to the base commit', tagAtBase: 'Tag on the base commit', tagAtHead: 'Tag on the current commit',
   resizeSidebar: 'Resize file sidebar',
   tourOpen: 'Show guided tour', tourClose: 'Close tour', tourProgress: '{current} of {total}', tourSkip: 'Skip', tourBack: 'Back', tourNext: 'Next', tourDone: 'Done',

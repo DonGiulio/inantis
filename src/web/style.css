@@ -46,6 +46,5 @@
 .topbar{position:sticky;top:0;z-index:20}
 .file-card{scroll-margin-top:64px}
 @media(min-width:801px){.sidebar{top:64px;max-height:calc(100vh - 74px)}}
-.comparison{min-width:0}.comparison-info{flex:1 1 10rem;min-width:0}.comparison-info>*+*{margin-left:5px}.comparison-name,.comparison-tag{min-width:0;overflow-wrap:anywhere}.comparison-fixed{white-space:nowrap}.comparison-tag{max-width:100%}
-@media(min-width:1100px){.toolbar{flex-wrap:nowrap}.comparison{flex:1;flex-wrap:nowrap}}
+.comparison{min-width:0}.comparison-info{min-width:0;display:grid;gap:4px;margin-bottom:12px}.comparison-row{display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;white-space:nowrap}.comparison-row>*{flex:none}.comparison-label{color:#515158;font-weight:600}.comparison-tag{margin-left:0}
 .addition .inline-change{background:#a9e8b6;color:inherit}.deletion .inline-change{background:#f4aeb9;color:inherit}
