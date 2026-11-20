@@ -50,6 +50,8 @@ For Codex, refresh the marketplace with `codex plugin marketplace upgrade inanti
 4. Choose **Add to review** to save a draft or **Send now** to publish a comment. You can send an individual draft later; **Complete review** publishes all drafts.
 5. Open **Discussions** to read the agent's replies and manage conversations.
 
+To set the target branch when starting Inantis, add `--base origin/main` to the command. The reference can also be a tag or commit.
+
 Select **?** in the header for a guided tour. To start with the tour open, add `--tour` to the Inantis command.
 
 ## How it works

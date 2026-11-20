@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Show the current branch before the comparison reference, matching the direction of a merge request.
+- Set the comparison target at startup with `--base`.
+- Keep comparison controls aligned when branch names are long.
+- Highlight changed characters within replacement lines in unified and side-by-side diffs.
+
 ## 0.1.1
 
 - Compare branch changes from the common ancestor with the target branch, excluding target changes already merged into the current branch.

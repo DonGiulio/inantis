@@ -10,11 +10,12 @@ import ContextGap from './ContextGap.vue'
 import FileIcon from './FileIcon.vue'
 import Walkthrough from './Walkthrough.vue'
 import { findFolds } from './folding'
+import { inlineChanges } from './inline-diff'
 import { parsePatch, parseExpandedPatch, type Diff, type DiffFile, type DiffLine, type Thread } from './types'
 
 type Mode = 'working' | 'upstream' | 'branch' | 'ref'
 const mode = ref<Mode>('branch')
-const reference = ref('')
+const reference = ref(new URLSearchParams(window.location.search).get('base') ?? '')
 const diff = ref<Diff | null>(null)
 const threads = ref<Thread[]>([])
 const search = ref('')
@@ -154,6 +155,7 @@ const parsed = computed(() => new Map((diff.value?.files || []).map(file => {
     return [...hidden.slice(0, top), ...(top + bottom < hidden.length ? [line] : []), ...hidden.slice(hidden.length - bottom)]
   })]
 })))
+const inlineByFile = computed(() => new Map([...parsed.value].map(([path, lines]) => [path, inlineChanges(lines)])))
 const openedLines = computed(() => openedFile.value?.content.split('\n') ?? [])
 const openedFolds = computed(() => openedFile.value ? findFolds(openedLines.value, openedFile.value.path) : new Map<number, number>())
 const closedOpenedFolds = ref(new Set<number>())
@@ -505,7 +507,7 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
     <div v-if="error" class="error" role="alert"><span>{{ error }}</span><button :aria-label="t('dismissMessage')" @click="error = ''">×</button></div>
     <div v-if="comparisonWarning" class="error" role="status"><span>{{ comparisonWarning }}</span><button :aria-label="t('dismissMessage')" @click="comparisonWarning = ''">×</button></div>
     <div v-if="view === 'changes'" class="toolbar">
-      <form class="comparison" @submit.prevent="loadDiff()"><label for="mode">{{ t('compare') }}</label><select id="mode" v-model="mode" @change="changeMode"><option value="working">{{ t('localChanges') }}</option><option value="upstream">{{ t('unpushedChanges') }}</option><option value="branch">{{ t('sinceBranch') }}</option><option value="ref">{{ t('fromReference') }}</option></select><template v-if="mode === 'ref' || mode === 'branch'"><label class="sr-only" for="reference">{{ t('gitReference') }}</label><input id="reference" v-model="reference" :placeholder="t('referencePlaceholder')" :required="mode === 'ref'"><button>{{ t('compare') }}</button></template><span v-if="diff" class="comparison-info"><span v-if="diff.baseIsEmpty">{{ t('emptyTree') }}</span><span v-else :title="diff.base">{{ diff.baseLabel ? `${diff.baseLabel} (${diff.base.slice(0, 12)})` : diff.base.slice(0, 12) }}</span><span v-for="ref in diff.baseRefs.filter(ref => ref !== diff?.baseLabel)" :key="`ref:${ref}`" class="comparison-tag" :title="t('branchAtBase')">{{ ref }}</span><span v-for="tag in diff.baseTags" :key="`base:${tag}`" class="comparison-tag" :title="t('tagAtBase')">{{ tag }}</span> → {{ diff.branch }}<span v-for="tag in diff.headTags" :key="`head:${tag}`" class="comparison-tag" :title="t('tagAtHead')">{{ tag }}</span> + {{ t('workingTree') }}</span></form>
+      <form class="comparison" @submit.prevent="loadDiff()"><label for="mode">{{ t('compare') }}</label><select id="mode" v-model="mode" @change="changeMode"><option value="working">{{ t('localChanges') }}</option><option value="upstream">{{ t('unpushedChanges') }}</option><option value="branch">{{ t('sinceBranch') }}</option><option value="ref">{{ t('fromReference') }}</option></select><template v-if="mode === 'ref' || mode === 'branch'"><label class="sr-only" for="reference">{{ t('gitReference') }}</label><input id="reference" v-model="reference" :placeholder="t('referencePlaceholder')" :required="mode === 'ref'"><button>{{ t('compare') }}</button></template><span v-if="diff" class="comparison-info"><span class="comparison-name">{{ diff.branch }}</span><span v-for="tag in diff.headTags" :key="`head:${tag}`" class="comparison-tag" :title="t('tagAtHead')">{{ tag }}</span><span class="comparison-fixed">+ {{ t('workingTree') }} →</span><span v-if="diff.baseIsEmpty" class="comparison-fixed">{{ t('emptyTree') }}</span><template v-else><span v-if="diff.baseLabel" class="comparison-name">{{ diff.baseLabel }}</span><span class="comparison-fixed" :title="diff.base">{{ diff.baseLabel ? `(${diff.base.slice(0, 12)})` : diff.base.slice(0, 12) }}</span></template><span v-for="ref in diff.baseRefs.filter(ref => ref !== diff?.baseLabel)" :key="`ref:${ref}`" class="comparison-tag" :title="t('branchAtBase')">{{ ref }}</span><span v-for="tag in diff.baseTags" :key="`base:${tag}`" class="comparison-tag" :title="t('tagAtBase')">{{ tag }}</span></span></form>
       <div class="summary"><span>{{ t('filesCount', { count: diff?.files.length || 0 }) }}</span> <b class="added">+{{ totals.additions }}</b> <b class="removed">−{{ totals.deletions }}</b><div class="view-switch" :aria-label="t('diffView')"><button :class="{ selected: !split }" :aria-pressed="!split" @click="split = false">{{ t('unified') }}</button><button :class="{ selected: split }" :aria-pressed="split" @click="split = true">{{ t('sideBySide') }}</button></div><button :class="{ selected: wrap }" :aria-pressed="wrap" @click="wrap = !wrap">{{ t('wrapLines') }}</button><button :disabled="loading" :aria-label="t('refreshChanges')" :title="t('refreshChanges')" @click="refresh">↻</button></div>
     </div>
     <div class="layout" :class="{ 'full-width': view !== 'changes' }" :style="{ '--sidebar-width': `${sidebarWidth}px` }">
@@ -546,7 +548,7 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
           <ThreadView v-for="thread in unplacedFileThreads(file)" :key="thread.id" :thread="thread" show-location @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
           <div v-if="!collapsed.has(file.path)" class="diff-scroll" :class="{ 'wrap-lines': wrap }" @pointercancel.capture="commentDragging = false">
             <p v-if="file.binary" class="empty">{{ t('binaryFile') }}</p><p v-else-if="!parsed.get(file.path)?.length" class="empty">{{ t('noTextDiff') }}</p>
-            <SplitDiff v-else-if="split" :key="file.contextId" :path="file.path" :lines="parsed.get(file.path) || []" :threads="threads" :wrap="wrap" @expand="expandGap(file, $event.key, $event.direction)" @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
+            <SplitDiff v-else-if="split" :key="file.contextId" :path="file.path" :lines="parsed.get(file.path) || []" :inline-changes="inlineByFile.get(file.path)" :threads="threads" :wrap="wrap" @expand="expandGap(file, $event.key, $event.direction)" @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
             <div v-else class="unified-lines">
               <template v-for="(line, index) in parsed.get(file.path)" :key="line.key">
                 <template v-if="!hiddenFold(index, diffFolds.get(file.contextId) || new Map(), start => closedDiffFolds.get(file.contextId)?.has((parsed.get(file.path) || [])[start].key) ?? false)">
@@ -557,7 +559,7 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
                     <button v-if="diffFolds.get(file.contextId)?.has(index)" type="button" class="fold-toggle" :aria-expanded="!closedDiffFolds.get(file.contextId)?.has(line.key)" :aria-label="t(closedDiffFolds.get(file.contextId)?.has(line.key) ? 'expandFold' : 'collapseFold', { line: line.newLine ?? line.oldLine ?? 0 })" @click="toggleDiffFold(file.contextId, line.key)">{{ closedDiffFolds.get(file.contextId)?.has(line.key) ? '▸' : '▾' }}</button><span v-else class="fold-spacer"></span>
                     <button class="line-number comment-trigger" data-comment-side="old" :aria-label="line.oldLine ? t('commentOnOldLine', { line: line.oldLine }) : t('noOldLine')" :disabled="line.oldLine === undefined" :aria-pressed="selectedComment(file.path, line.oldLine, 'old')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startCommentDrag($event, file.path, line.oldLine, 'old')" @pointermove="moveCommentDrag" @pointerup="endCommentDrag" @pointercancel="commentDrag = null" @click="line.oldLine !== undefined && beginComment(file.path, line.oldLine, 'old', $event)">{{ line.oldLine }}</button>
                     <button class="line-number comment-trigger" data-comment-side="new" :aria-label="line.newLine ? t('commentOnNewLine', { line: line.newLine }) : t('noNewLine')" :disabled="line.newLine === undefined" :aria-pressed="selectedComment(file.path, line.newLine, 'new')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startCommentDrag($event, file.path, line.newLine, 'new')" @pointermove="moveCommentDrag" @pointerup="endCommentDrag" @pointercancel="commentDrag = null" @click="line.newLine !== undefined && beginComment(file.path, line.newLine, 'new', $event)">{{ line.newLine }}</button>
-                    <span class="sign">{{ line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '−' : ' ' }}</span><CodeText :path="file.path" :text="line.text" />
+                    <span class="sign">{{ line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '−' : ' ' }}</span><CodeText :path="file.path" :text="line.text" :changes="inlineByFile.get(file.path)?.get(line.key)" />
                   </template>
                 </div>
                 <div v-if="closedDiffFolds.get(file.contextId)?.has(line.key) && diffFolds.get(file.contextId)?.has(index)" class="fold-summary">{{ t('hiddenFoldLines', { count: diffFolds.get(file.contextId)!.get(index)! - index }) }}</div>

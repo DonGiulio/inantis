@@ -76,8 +76,15 @@ try {
       }
     } finally { store.dispose(); }
   } else {
-    if (args.some(arg => arg !== '--dev' && arg !== '--tour') || new Set(args).size !== args.length) throw new Error('Usage: inantis [--comments-dir <path>] [--dev] [--tour] [comments list|watch|create|reply ...]');
-    const development = args.includes('--dev');
+    const { values, tokens } = parseArgs({
+      args,
+      options: { dev: { type: 'boolean' }, tour: { type: 'boolean' }, base: { type: 'string' } },
+      tokens: true,
+    });
+    const options = tokens.filter(token => token.kind === 'option').map(token => token.name);
+    if (new Set(options).size !== options.length) throw new Error('Options must not be repeated');
+    if (values.base !== undefined && !values.base.trim()) throw new Error('--base requires a Git reference');
+    const development = values.dev === true;
     const app = await createServer(root, commentsDir);
     let marker: string | undefined;
     app.addHook('onClose', async () => {
@@ -99,10 +106,13 @@ try {
         console.error(`Cannot enable OMP feedback notifications: ${errorMessage(error, locale)}`);
       }
     }
-    const launchUrl = args.includes('--tour') ? `${url}/?tour=1` : url;
-    console.log(translate(locale, 'cliStarted', { url: launchUrl, root }));
+    const launchUrl = new URL(url);
+    if (values.tour) launchUrl.searchParams.set('tour', '1');
+    if (values.base !== undefined) launchUrl.searchParams.set('base', values.base);
+    const displayUrl = launchUrl.toString();
+    console.log(translate(locale, 'cliStarted', { url: displayUrl, root }));
     if (!development) {
-      try { await open(launchUrl); } catch (error) { console.error(translate(locale, 'cliBrowserFailed', { error: String(error) })); }
+      try { await open(displayUrl); } catch (error) { console.error(translate(locale, 'cliBrowserFailed', { error: String(error) })); }
     }
     let stopping = false;
     const stop = async () => { if (stopping) return; stopping = true; await app.close(); process.exit(0); };
