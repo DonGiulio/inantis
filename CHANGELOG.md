@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Compare branch changes from the common ancestor with the target branch, excluding target changes already merged into the current branch.
+
 ## 0.1.0
 
 Initial release of Inantis.

@@ -78,3 +78,32 @@ test('identifies uncommitted files in a branch comparison without marking commit
     });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('compares a branch against the common ancestor with its target after a merge', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'review-merged-target-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  try {
+    git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    git('add', '.'); git('commit', '-m', 'base'); git('branch', 'target');
+    git('checkout', '-b', 'feature', 'target');
+    writeFileSync(join(root, 'feature.txt'), 'feature\n');
+    git('add', '.'); git('commit', '-m', 'feature');
+    git('checkout', 'target');
+    writeFileSync(join(root, 'merged.txt'), 'merged target change\n');
+    git('add', '.'); git('commit', '-m', 'target change');
+    git('checkout', 'feature'); git('merge', '--no-ff', 'target', '-m', 'merge target');
+    git('checkout', 'target');
+    writeFileSync(join(root, 'later.txt'), 'not merged\n');
+    git('add', '.'); git('commit', '-m', 'later target change');
+    git('checkout', 'feature');
+    writeFileSync(join(root, 'local.txt'), 'uncommitted\n');
+
+    for (const ref of [undefined, 'target']) {
+      const result = await getDiff(root, 'branch', ref);
+      assert.deepEqual(result.files.map(file => file.path).sort(), ['feature.txt', 'local.txt']);
+    }
+    const direct = await getDiff(root, 'ref', 'target');
+    assert.ok(direct.files.some(file => file.path === 'later.txt'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

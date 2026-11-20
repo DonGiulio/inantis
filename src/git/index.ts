@@ -112,9 +112,9 @@ function counts(output: string): { additions: number; deletions: number; binary:
 }
 
 /**
- * Compare the selected commit to the current working tree, including staged,
- * unstaged and non-ignored untracked files. A branch base is inferred only
- * from a surviving branch-creation reflog entry, or supplied explicitly.
+ * Compare the selected base to the current working tree, including staged,
+ * unstaged and non-ignored untracked files. Branch comparisons use the common
+ * ancestor with the supplied or inferred target when it is still available.
  * Binary changes have zero line counts; their patches contain Git's marker.
  */
 export async function* streamDiff(root: string, mode: Mode, ref?: string): AsyncGenerator<DiffEvent> {
@@ -149,7 +149,15 @@ export async function* streamDiff(root: string, mode: Mode, ref?: string): Async
   } else if (mode === 'branch') {
     const origin = ref ? { hash: await commit(root, ref), label: ref } : await branchBase(root, branchRef);
     if (origin) {
-      base = origin.hash;
+      let target = ref ? origin.hash : undefined;
+      if (!ref && origin.label !== 'HEAD') {
+        const resolved = await git(root, ['rev-parse', '--verify', '--symbolic-full-name', '--end-of-options', origin.label]);
+        const name = line(resolved.stdout);
+        if (resolved.code === 0 && (name.startsWith('refs/heads/') || name.startsWith('refs/remotes/'))) {
+          target = await commit(root, name);
+        }
+      }
+      base = head && target ? line(await run(root, ['merge-base', head, target])) : origin.hash;
       if (origin.label !== 'HEAD') baseLabel = origin.label;
     } else {
       if (head) throw new AppError('noBranchBase');
