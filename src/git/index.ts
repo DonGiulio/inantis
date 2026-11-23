@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AppError } from '../locales/index.js';
+import { mapOrdered } from './map-ordered.js';
 
 export interface DiffFile {
   path: string;
@@ -112,19 +113,6 @@ interface RawEntry {
   firstPath: string;
   path: string;
   renamed: boolean;
-}
-
-async function* mapOrdered<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): AsyncGenerator<R> {
-  const inFlight: Promise<R>[] = [];
-  let next = 0;
-  while (next < items.length || inFlight.length > 0) {
-    while (inFlight.length < limit && next < items.length) {
-      const promise = work(items[next++]);
-      promise.catch(() => {}); // Reported when awaited in order below; avoids unhandled-rejection noise.
-      inFlight.push(promise);
-    }
-    yield await inFlight.shift()!;
-  }
 }
 
 // `-p --numstat -z` prints NUL-terminated numstat records, one extra NUL, then the patch.
