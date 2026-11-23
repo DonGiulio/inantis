@@ -52,7 +52,64 @@ test('serves the diff and protects changes from external origins', async () => {
     const streamed = stream.body.trim().split('\n').map(record => JSON.parse(record));
     assert.ok(streamed.some(event => event.type === 'file' && event.file.path === '.agentic-change-reviewer/notes.md'));
     assert.ok(!streamed.some(event => event.type === 'file' && event.file.path === `.agentic-change-reviewer/${markdown}`));
-  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await app.close(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
+
+test('validates comparison, file and search inputs and handles empty results', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'review-input-validation-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+  await writeFile(join(root, 'source.txt'), 'needle\nother line\n');
+  git('add', '.'); git('commit', '-m', 'initial');
+  const sibling = join(root, '..', 'outside-review-file.txt');
+  await writeFile(sibling, 'outside');
+  const app = await createServer(root);
+  try {
+    const foreignHost = await app.inject({ method: 'GET', url: '/api/review/unanswered', headers: { host: 'example.com' } });
+    assert.equal(foreignHost.statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/threads', payload: {} })).statusCode, 403);
+    assert.notEqual((await app.inject({ method: 'OPTIONS', url: '/api/review/unanswered' })).statusCode, 403);
+    assert.equal((await app.inject('/api/diff?mode=invalid')).statusCode, 400);
+    assert.equal((await app.inject('/api/diff/stream?mode=invalid')).statusCode, 400);
+    const streamError = await app.inject('/api/diff/stream?mode=ref&ref=missing-ref');
+    const event = JSON.parse(streamError.body.trim());
+    assert.equal(event.type, 'error');
+    assert.ok(event.error);
+    assert.equal((await app.inject('/api/diff/context?mode=invalid&path=source.txt&id=' + 'a'.repeat(64))).statusCode, 400);
+    assert.equal((await app.inject('/api/diff/context?path=.git/config&id=' + 'a'.repeat(64))).statusCode, 400);
+    assert.equal((await app.inject('/api/diff/context?path=source.txt&id=bad')).statusCode, 400);
+    assert.equal((await app.inject('/api/diff/context?path=missing.txt&id=' + 'a'.repeat(64))).statusCode, 409);
+    assert.deepEqual((await app.inject('/api/search?q=not-found')).json(), { matches: [] });
+    await writeFile(join(root, 'many-matches.txt'), `${Array.from({ length: 505 }, (_, index) => `needle ${index}`).join('\n')}\n`);
+    assert.equal((await app.inject('/api/search?q=needle')).json().matches.length, 500);
+    assert.equal((await app.inject('/api/search?q=line%0Abreak')).statusCode, 400);
+    assert.equal((await app.inject(`/api/search?q=${'x'.repeat(513)}`)).statusCode, 400);
+    assert.deepEqual((await app.inject('/api/file?path=source.txt')).json(), { content: 'needle\nother line\n' });
+    assert.equal((await app.inject('/api/file?path=.git/config')).statusCode, 400);
+    assert.equal((await app.inject('/api/file?path=missing.txt')).statusCode, 400);
+    assert.equal((await app.inject('/api/file?path=../outside-review-file.txt')).statusCode, 400);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(sibling, { force: true });
+  }
+});
+
+test('closes and recreates reviews through the API', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'review-close-api-'));
+  const app = await createServer(root);
+  try {
+    const headers = { origin: 'http://localhost:80' };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/close', headers, payload: { keep: 'yes' } })).statusCode, 400);
+    const created = await app.inject({ method: 'POST', url: '/api/threads', headers: { origin: 'http://localhost:80' }, payload: { path: '', line: null, side: 'new', body: 'question', published: true } });
+    assert.equal(created.statusCode, 200);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/close', headers, payload: { keep: true } })).statusCode, 200);
+    assert.deepEqual((await app.inject('/api/threads')).json(), []);
+    assert.ok((await readdir(join(root, '.agentic-change-reviewer'))).some(name => name.endsWith('.md')));
+    assert.equal((await app.inject({ method: 'POST', url: '/api/close', headers, payload: { keep: false } })).statusCode, 200);
+    assert.deepEqual((await app.inject('/api/threads')).json(), []);
+    assert.deepEqual((await app.inject('/api/review/unanswered')).json().threads, []);
+  } finally { await app.close(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
 test('development proxy saves drafts and rejects external origins', async () => {

@@ -96,7 +96,7 @@ test('context endpoint uses the selected base and the paths from the actual diff
     await writeFile(join(root, 'new name.txt'), modified.join('\n') + '\n');
     const stale = await app.inject(`/api/diff/context?mode=working&path=${encodeURIComponent('new name.txt')}&id=${renamed.contextId}`);
     assert.equal(stale.statusCode, 409);
-  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await app.close(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
 test('context follows an explicit historical ref and supports untracked additions', async () => {
@@ -125,5 +125,5 @@ test('context follows an explicit historical ref and supports untracked addition
     assert.equal(addition.statusCode, 200);
     assert.match(addition.json().patch, /\+new without newline/);
     assert.equal(parseExpandedPatch(added.patch, addition.json().patch).some(line => line.kind === 'gap'), false);
-  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await app.close(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });

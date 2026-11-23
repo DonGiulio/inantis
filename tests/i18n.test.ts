@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { registerLocale, selectLocale, t } from '../src/web/i18n.js';
+import { formatDate, registerLocale, selectLocale, t } from '../src/web/i18n.js';
 
 test('selects a registered language and falls back to English for missing messages', () => {
   registerLocale('fr', { compare: 'Comparer', commentOnLine: 'Ligne {line}' });
@@ -11,4 +11,23 @@ test('selects a registered language and falls back to English for missing messag
   assert.equal(selectLocale(['unknown']), 'en');
   assert.equal(t('filesCount', { count: 1 }), '1 file');
   assert.equal(t('filesCount', { count: 2 }), '2 files');
+  registerLocale('ru', { filesCount: { one: 'one {count}', few: 'few {count}', many: 'many {count}', other: 'other {count}' } });
+  selectLocale(['ru']);
+  assert.equal(t('filesCount', { count: 2 }), 'few 2');
+  assert.equal(t('filesCount', { count: 5 }), 'many 5');
+  assert.equal(t('filesCount', { count: 1.5 }), 'other 1.5');
+  assert.equal(t('filesCount', { count: 2, extra: 'unused' }), 'few 2');
+  assert.equal(t('filesCount', { count: 2 }), 'few 2');
+  assert.equal(t('filesCount', { count: 1 }), 'one 1');
+  assert.equal(t('filesCount', { count: 1, missing: undefined }), 'one 1');
+  registerLocale('fr', { filesCount: { other: 'fichiers {count}' } });
+  selectLocale(['fr']);
+  assert.equal(t('filesCount', { count: 1 }), 'fichiers 1');
+  registerLocale('de', {});
+  selectLocale(['de']);
+  assert.equal(t('filesCount', { count: 1 }), '1 file');
+  assert.equal(t('compare', { missing: undefined }), 'Compare');
+  assert.equal(selectLocale(['fr-FR', 'ru']), 'fr');
+  assert.equal(selectLocale([]), 'en');
+  assert.equal(formatDate('2026-01-02T03:04:05.000Z').length > 0, true);
 });

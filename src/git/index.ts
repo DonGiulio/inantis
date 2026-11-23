@@ -103,6 +103,37 @@ async function branchBase(root: string, branchRef: string | undefined): Promise<
 
 const diffOptions = ['--no-ext-diff', '--no-textconv', '--find-renames'];
 
+// Git work for up to this many files runs concurrently; files are still yielded in raw order.
+// Files may be read slightly before the consumer asks for them; contextId rejects stale expansions.
+const FILE_CONCURRENCY = 8;
+
+interface RawEntry {
+  status: string;
+  firstPath: string;
+  path: string;
+  renamed: boolean;
+}
+
+async function* mapOrdered<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): AsyncGenerator<R> {
+  const inFlight: Promise<R>[] = [];
+  let next = 0;
+  while (next < items.length || inFlight.length > 0) {
+    while (inFlight.length < limit && next < items.length) {
+      const promise = work(items[next++]);
+      promise.catch(() => {}); // Reported when awaited in order below; avoids unhandled-rejection noise.
+      inFlight.push(promise);
+    }
+    yield await inFlight.shift()!;
+  }
+}
+
+// `-p --numstat -z` prints NUL-terminated numstat records, one extra NUL, then the patch.
+function splitNumstatPatch(output: string): { stat: string; patch: string } {
+  const end = output.indexOf('\0\0');
+  if (end === -1) throw new Error('Unexpected git numstat output');
+  return { stat: output.slice(0, end), patch: output.slice(end + 2) };
+}
+
 function counts(output: string): { additions: number; deletions: number; binary: boolean } {
   const first = output.split('\0', 1)[0];
   const match = /^(\d+|-)\t(\d+|-)\t/.exec(first);
@@ -188,6 +219,7 @@ export async function* streamDiff(root: string, mode: Mode, ref?: string): Async
       .digest('hex');
     return file;
   };
+  const rawEntries: RawEntry[] = [];
   for (let i = 0; i < tokens.length && tokens[i];) {
     const header = tokens[i++];
     const match = /^:[0-7]+ [0-7]+ [0-9a-f]+ [0-9a-f]+ ([A-Z])\d*$/.exec(header);
@@ -197,24 +229,24 @@ export async function* streamDiff(root: string, mode: Mode, ref?: string): Async
     const renamed = status === 'R' || status === 'C';
     const path = renamed ? tokens[i++] : firstPath;
     if (path === undefined) throw new AppError('incompleteRawDiff');
-    const pathspecs = (renamed ? [firstPath, path] : [path]).map((name) => `:(literal)${name}`);
-    const args = ['diff', ...diffOptions, base, '--', ...pathspecs];
-    const [stat, patch] = await Promise.all([
-      run(root, ['diff', ...diffOptions, '--numstat', '-z', base, '--', ...pathspecs]),
-      run(root, args),
-    ]);
-    yield { type: 'file', file: withContextId({ path, ...(renamed ? { oldPath: firstPath } : {}), status, ...counts(stat), patch, contextId: '', uncommitted: !head || uncommittedPaths.has(path) || (renamed && uncommittedPaths.has(firstPath)) }) };
+    rawEntries.push({ status, firstPath, path, renamed });
   }
+  const trackedFile = async ({ status, firstPath, path, renamed }: RawEntry): Promise<DiffFile> => {
+    const pathspecs = (renamed ? [firstPath, path] : [path]).map((name) => `:(literal)${name}`);
+    const { stat, patch } = splitNumstatPatch(await run(root, ['diff', ...diffOptions, '-p', '--numstat', '-z', base, '--', ...pathspecs]));
+    return withContextId({ path, ...(renamed ? { oldPath: firstPath } : {}), status, ...counts(stat), patch, contextId: '', uncommitted: !head || uncommittedPaths.has(path) || (renamed && uncommittedPaths.has(firstPath)) });
+  };
+  for await (const file of mapOrdered(rawEntries, FILE_CONCURRENCY, trackedFile)) yield { type: 'file', file };
 
-  const untracked = await run(root, ['ls-files', '--others', '--exclude-standard', '-z']);
-  for (const path of untracked.split('\0')) {
-    if (!path) continue;
+  const untrackedFile = async (path: string): Promise<DiffFile | undefined> => {
     let linkTarget: string | undefined;
     try {
       const info = await lstat(join(root, path));
+      // Nested repositories appear as directories; they have no file diff to show.
+      if (info.isDirectory()) return undefined;
       if (info.isSymbolicLink()) linkTarget = await readlink(join(root, path));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw error;
     }
     if (linkTarget !== undefined) {
@@ -223,20 +255,22 @@ export async function* streamDiff(root: string, mode: Mode, ref?: string): Async
       const quotedOld = JSON.stringify(`a/${path}`);
       const quotedNew = JSON.stringify(`b/${path}`);
       const patch = `diff --git ${quotedOld} ${quotedNew}\nnew file mode 120000\n--- /dev/null\n+++ ${quotedNew}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(value => `+${value}\n`).join('')}${linkTarget.endsWith('\n') ? '' : '\\ No newline at end of file\n'}`;
-      yield { type: 'file', file: withContextId({ path, status: 'A', additions: lines.length, deletions: 0, binary: false, patch, contextId: '', uncommitted: true }) };
-      continue;
+      return withContextId({ path, status: 'A', additions: lines.length, deletions: 0, binary: false, patch, contextId: '', uncommitted: true });
     }
     // Prefixing ./ prevents a filename beginning with '-' from being an option.
     const args = ['diff', '--no-index', '--no-ext-diff', '--no-textconv'];
-    const [stat, patch] = await Promise.all([
-      git(root, [...args, '--numstat', '-z', '--', '/dev/null', `./${path}`]),
-      git(root, [...args, '--', '/dev/null', `./${path}`]),
-    ]);
-    if (stat.code > 1 || patch.code > 1) {
-      const error = stat.stderr.trim() || patch.stderr.trim();
+    const combined = await git(root, [...args, '-p', '--numstat', '-z', '--', '/dev/null', `./${path}`]);
+    if (combined.code > 1) {
+      const error = combined.stderr.trim();
       throw error ? new Error(error) : new AppError('untrackedDiffFailed', { path });
     }
-    yield { type: 'file', file: withContextId({ path, status: 'A', ...counts(stat.stdout), patch: patch.stdout, contextId: '', uncommitted: true }) };
+    const { stat, patch } = splitNumstatPatch(combined.stdout);
+    return withContextId({ path, status: 'A', ...counts(stat), patch, contextId: '', uncommitted: true });
+  };
+  const untracked = await run(root, ['ls-files', '--others', '--exclude-standard', '-z']);
+  const untrackedPaths = untracked.split('\0').filter(Boolean);
+  for await (const file of mapOrdered(untrackedPaths, FILE_CONCURRENCY, untrackedFile)) {
+    if (file) yield { type: 'file', file };
   }
 }
 
