@@ -2,6 +2,8 @@
 
 Inantis lets you review a coding agent's changes in your browser while it works. Browse Git diffs, explore files, and exchange comments with the agent without leaving your local repository.
 
+![Reviewing changes and discussing a line with an agent](assets/screenshots/review.png)
+
 ## Installation
 
 You need Node.js 22.13 or later, npm, and Git. From the repository you want to review, run:
@@ -49,6 +51,8 @@ For Codex, refresh the marketplace with `codex plugin marketplace upgrade inanti
 3. Hover over a line number and select `+` to comment. Drag or Shift-click to select a range. Commented lines remain highlighted, including multiline ranges. You can also start a general discussion.
 4. Choose **Add to review** to save a draft or **Send now** to publish a comment. You can send an individual draft later; **Complete review** publishes all drafts.
 5. Use the arrows to navigate discussions; the sidebar shows the number of comments per file. Open **Discussions** to read the agent's replies and manage conversations.
+
+![The discussions view with a reviewer comment and agent reply](assets/screenshots/discussions.png)
 
 To set the target branch when starting Inantis, add `--base origin/main` to the command. The reference can also be a tag or commit.
 
