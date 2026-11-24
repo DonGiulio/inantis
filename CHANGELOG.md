@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- Navigate between discussions and see comment counts beside changed files.
+- Highlight the lines and ranges associated with discussions.
+- Collapse resolved threads in the Discussions tab while keeping them expandable.
+- Preserve the selected comparison when returning from a file or restoring the view.
+
 ## 0.1.2
 
 - Show comparison source and base on separate horizontally scrollable rows.

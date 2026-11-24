@@ -46,9 +46,9 @@ For Codex, refresh the marketplace with `codex plugin marketplace upgrade inanti
 
 1. By default, Inantis compares changes since the branch started, including uncommitted work. When a target branch is known or supplied, the comparison starts at its common ancestor with the current branch. Enter the target branch if it cannot be inferred. If the branch start is unavailable, Inantis shows local changes and a warning. You can also select another comparison or Git reference.
 2. Select a file to review its diff. Drag the sidebar divider to adjust its width. Files with uncommitted changes are marked. Switch between unified and side-by-side views or open the full file for context.
-3. Hover over a line number and select `+` to comment. Drag or Shift-click to select a range. You can also start a general discussion.
+3. Hover over a line number and select `+` to comment. Drag or Shift-click to select a range. Commented lines remain highlighted, including multiline ranges. You can also start a general discussion.
 4. Choose **Add to review** to save a draft or **Send now** to publish a comment. You can send an individual draft later; **Complete review** publishes all drafts.
-5. Open **Discussions** to read the agent's replies and manage conversations.
+5. Use the arrows to navigate discussions; the sidebar shows the number of comments per file. Open **Discussions** to read the agent's replies and manage conversations.
 
 To set the target branch when starting Inantis, add `--base origin/main` to the command. The reference can also be a tag or commit.
 
