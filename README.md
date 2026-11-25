@@ -74,3 +74,5 @@ npm run dev
 ```
 
 Run `npm test` and `npm run build` before submitting a pull request.
+
+To benchmark diff streaming, create a large repository with `scripts/diff-perf/create-bench-repo.sh` and run `node --import tsx scripts/diff-perf/bench-stream-diff.mts <repo>`. `verify-stream-against-git.mts <repo>` checks the streamed output against Git. See [docs/RUNBOOK.md](docs/RUNBOOK.md) for details.

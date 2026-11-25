@@ -1,7 +1,5 @@
 # Runbook
 
-Where the scripts, identifiers and URLs are listed: [ARTIFACTS.md](ARTIFACTS.md).
-
 Commands verified on Windows 11 with Node 22.22, Git 2.56, PowerShell or Git Bash. Run from the repository root unless noted.
 
 ## Setup

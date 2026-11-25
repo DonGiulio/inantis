@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -56,12 +56,14 @@ test('serves the diff and protects changes from external origins', async () => {
 });
 
 test('validates comparison, file and search inputs and handles empty results', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'review-input-validation-'));
+  const parent = await mkdtemp(join(tmpdir(), 'review-input-validation-'));
+  const root = join(parent, 'repo');
+  await mkdir(root);
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
   await writeFile(join(root, 'source.txt'), 'needle\nother line\n');
   git('add', '.'); git('commit', '-m', 'initial');
-  const sibling = join(root, '..', 'outside-review-file.txt');
+  const sibling = join(parent, 'outside-review-file.txt');
   await writeFile(sibling, 'outside');
   const app = await createServer(root);
   try {
@@ -90,8 +92,7 @@ test('validates comparison, file and search inputs and handles empty results', a
     assert.equal((await app.inject('/api/file?path=../outside-review-file.txt')).statusCode, 400);
   } finally {
     await app.close();
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    await rm(sibling, { force: true });
+    await rm(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

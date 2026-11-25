@@ -4,7 +4,7 @@
 // Untracked files: additions must equal the number of lines in the file.
 // Exit code 0 when no mismatches are found.
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { streamDiff } from '../../src/git/index.ts';
 
@@ -24,28 +24,52 @@ for await (const event of streamDiff(root, 'working')) {
   else files.push(event.file);
 }
 
+const countLines = (text: string) => (text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0));
+// `git diff --no-index` exits 1 when the files differ, which execFileSync reports as an error.
+const noIndexNumstat = (path: string) => {
+  try {
+    return git('diff', '--no-index', '--numstat', '--no-ext-diff', '--no-textconv', '--', '/dev/null', `./${path}`);
+  } catch (error) {
+    if ((error as { status?: number }).status === 1) return String((error as { stdout?: string }).stdout ?? '');
+    throw error;
+  }
+};
+
+// Untracked paths come from Git itself: status "A" alone also matches staged additions.
+const untracked = git('ls-files', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean);
+const untrackedSet = new Set(untracked);
+
 const problems: string[] = [];
 const seen = new Set<string>();
 for (const file of files) {
   if (seen.has(file.path)) problems.push(`duplicate ${file.path}`);
   seen.add(file.path);
 
-  const pathspec = `:(literal)${file.path}`;
-  if (file.status !== 'A') {
+  if (!untrackedSet.has(file.path)) {
+    // Tracked and staged files, including staged additions, are compared against `git diff <base>`.
+    const pathspec = `:(literal)${file.path}`;
     const expected = git('diff', '--no-ext-diff', '--no-textconv', '--find-renames', base, '--', pathspec);
     if (expected !== file.patch) problems.push(`patch differs: ${file.path}`);
     const numstat = git('diff', '--numstat', '--no-ext-diff', '--no-textconv', base, '--', pathspec).trim().split('\t');
     if (numstat[0] !== '-' && Number(numstat[0]) !== file.additions) problems.push(`additions differ: ${file.path}`);
+  } else if (lstatSync(join(root, file.path)).isSymbolicLink()) {
+    // An untracked symlink is diffed as its target text, even when the target does not exist.
+    const lines = countLines(readlinkSync(join(root, file.path)));
+    if (file.additions !== lines) problems.push(`untracked symlink additions ${file.additions} != target lines ${lines}: ${file.path}`);
   } else {
-    const text = readFileSync(join(root, file.path), 'utf8');
-    const lines = text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
-    if (file.additions !== lines) problems.push(`untracked additions ${file.additions} != lines ${lines}: ${file.path}`);
+    // Binary files report "-" in numstat and must stream with zero additions.
+    const added = noIndexNumstat(file.path).split('\t')[0];
+    const expected = added === '-' ? 0 : Number(added);
+    if (file.additions !== expected) problems.push(`untracked additions ${file.additions} != numstat ${expected}: ${file.path}`);
   }
 }
 
-const untracked = git('ls-files', '--others', '--exclude-standard').trim().split('\n').filter(Boolean);
-const streamedUntracked = files.filter(file => file.status === 'A').map(file => file.path);
-for (const path of untracked) if (!streamedUntracked.includes(path)) problems.push(`untracked missing from stream: ${path}`);
+const streamedPaths = new Set(files.map(file => file.path));
+for (const path of untracked) {
+  // Nested repositories appear as directories and have no file diff.
+  if (lstatSync(join(root, path), { throwIfNoEntry: false })?.isDirectory()) continue;
+  if (!streamedPaths.has(path)) problems.push(`untracked missing from stream: ${path}`);
+}
 
 console.log(`files ${files.length} untracked ${untracked.length} problems ${problems.length}`);
 for (const problem of problems.slice(0, 20)) console.log(`  ${problem}`);
