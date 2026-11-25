@@ -4,7 +4,7 @@ import { t, formatDate } from './i18n'
 import { renderMarkdown } from './markdown'
 import type { Thread } from './types'
 
-const props = defineProps<{ thread: Thread; compact?: boolean; showLocation?: boolean }>()
+const props = defineProps<{ thread: Thread; compact?: boolean; collapseResolved?: boolean; showLocation?: boolean }>()
 const emit = defineEmits<{ changed: []; error: [message: string]; openFile: [path: string] }>()
 const reply = ref('')
 const editing = ref<string | null>(null)
@@ -38,13 +38,14 @@ async function saveEdit(id: string) {
 </script>
 
 <template>
-  <button v-if="compact && thread.resolved && !expanded" class="resolved-thread-icon" :aria-label="t('expandResolvedDiscussion')" :title="t('expandResolvedDiscussion')" @click="expanded = true">✓</button>
-  <section v-else class="thread" :aria-label="!thread.path ? t('generalDiscussion') : thread.startLine !== undefined ? `Discussion on lines ${thread.startLine}–${thread.line}` : t('discussionOnLine', { line: thread.line ?? '' })">
+  <button v-if="compact && thread.resolved && !expanded" class="resolved-thread-icon" :data-thread-id="thread.id" :aria-label="t('expandResolvedDiscussion')" :title="t('expandResolvedDiscussion')" @click="expanded = true">✓</button>
+  <button v-else-if="collapseResolved && thread.resolved && !expanded" class="resolved-thread-summary" :data-thread-id="thread.id" :aria-label="t('expandResolvedDiscussion')" aria-expanded="false" @click="expanded = true"><span class="resolved">✓ {{ t('resolved') }}</span><span v-if="thread.path" class="resolved-thread-location">{{ thread.path }}<template v-if="thread.line !== null">:{{ thread.startLine !== undefined ? `${thread.startLine}–` : '' }}{{ thread.line }}</template></span><span class="resolved-thread-preview">{{ thread.messages[0]?.body }}</span><span aria-hidden="true">▾</span></button>
+  <section v-else class="thread" :data-thread-id="thread.id" :aria-label="!thread.path ? t('generalDiscussion') : thread.startLine !== undefined ? `Discussion on lines ${thread.startLine}–${thread.line}` : t('discussionOnLine', { line: thread.line ?? '' })">
     <div class="thread-heading">
       <span v-if="thread.startLine !== undefined">Lines {{ thread.startLine }}–{{ thread.line }}</span>
       <strong>{{ t('discussion') }} <span v-if="thread.resolved" class="resolved">{{ t('resolved') }}</span></strong>
       <button class="text-button" :disabled="busy" @click="request(`${base()}/resolve`, 'POST', { resolved: !thread.resolved })">{{ t(thread.resolved ? 'reopen' : 'resolve') }}</button>
-      <button v-if="compact && thread.resolved" class="text-button" @click="expanded = false">{{ t('collapseDiscussion') }}</button>
+      <button v-if="(compact || collapseResolved) && thread.resolved" class="text-button" @click="expanded = false">{{ t('collapseDiscussion') }}</button>
     </div>
     <p v-if="thread.path" class="discussion-location"><button type="button" class="text-button" @click="emit('openFile', thread.path)">{{ thread.path }}</button><span v-if="thread.line !== null"> · {{ t(thread.side === 'old' ? 'oldLineLocation' : 'newLineLocation', { path: '', line: thread.line }).replace(' · ', '') }}</span></p>
     <p v-if="thread.stale" class="stale-warning">{{ t('staleWarning') }}</p>

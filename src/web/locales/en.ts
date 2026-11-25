@@ -8,6 +8,7 @@ export const en = {
   expandContext: 'Expand hidden lines',
   expandFold: 'Expand code starting at line {line}', collapseFold: 'Collapse code starting at line {line}', hiddenFoldLines: { one: '{count} line hidden', other: '{count} lines hidden' },
   selectionOccurrences: { one: '{count} occurrence in file', other: '{count} occurrences in file' },
+  commentNavigation: 'Navigate discussions', previousComment: 'Previous discussion', nextComment: 'Next discussion', fileComments: { one: '{count} comment', other: '{count} comments' },
   markReviewed: 'Mark file reviewed', markUnreviewed: 'Mark file unreviewed',
   openAFile: 'Open a file', browseFiles: 'Browse files outside the diff too.', pathPlaceholder: 'Path in repository', openFile: 'Open file', searchCode: 'Search code', searchRepository: 'Search for text in the repository.', searchPlaceholder: 'Text to search for', searching: 'Searching…', search: 'Search', noResults: 'No results.', closeFile: 'Close file',
   commentOnLine: 'Comment on line {line}', commentOnOldLine: 'Comment on old line {line}', commentOnNewLine: 'Comment on new line {line}', noOldLine: 'No old line', noNewLine: 'No new line', newComment: 'New comment', writeComment: 'Write a comment…', saveDraft: 'Save draft', cancel: 'Cancel', loadingChanges: 'Loading changes…', noChanges: 'No changes for this comparison.', expandFile: 'Expand {path}', collapseFile: 'Collapse {path}', fromPath: 'from {path}', openFullFile: 'Open full file', binaryFile: 'Binary file: cannot display the diff.', noTextDiff: 'No text diff available.',

@@ -11,11 +11,14 @@ import FileIcon from './FileIcon.vue'
 import Walkthrough from './Walkthrough.vue'
 import { findFolds } from './folding'
 import { inlineChanges } from './inline-diff'
+import { commentLineClasses } from './comment-highlights'
+import { restoreComparison, type ComparisonMode } from './comparison-state'
 import { parsePatch, parseExpandedPatch, type Diff, type DiffFile, type DiffLine, type Thread } from './types'
 
-type Mode = 'working' | 'upstream' | 'branch' | 'ref'
+type Mode = ComparisonMode
 const mode = ref<Mode>('branch')
-const reference = ref(new URLSearchParams(window.location.search).get('base') ?? '')
+const launchBase = new URLSearchParams(window.location.search).get('base')
+const reference = ref(launchBase ?? '')
 const diff = ref<Diff | null>(null)
 const threads = ref<Thread[]>([])
 const search = ref('')
@@ -79,7 +82,7 @@ let diffRequest: AbortController | undefined
 let requestVersion = 0
 const stateKey = 'agentic-review-view'
 function saveView() {
-  sessionStorage.setItem(stateKey, JSON.stringify({ split: split.value, wrap: wrap.value, tree: tree.value, sidebarWidth: sidebarWidth.value, view: view.value, path: openedFile.value?.path, scrollX: window.scrollX, scrollY: window.scrollY }))
+  sessionStorage.setItem(stateKey, JSON.stringify({ split: split.value, wrap: wrap.value, tree: tree.value, sidebarWidth: sidebarWidth.value, view: view.value, path: openedFile.value?.path, mode: mode.value, reference: reference.value, launchBase, scrollX: window.scrollX, scrollY: window.scrollY }))
 }
 
 const filteredFiles = computed(() => (diff.value?.files || []).filter(file => file.path.toLowerCase().includes(search.value.toLowerCase())))
@@ -102,6 +105,36 @@ function scheduleActiveFile() {
 watch(() => [view.value, ...filteredFiles.value.map(file => file.path), collapsed.value.size], async () => { await nextTick(); scheduleActiveFile() })
 const orphanedThreads = computed(() => threads.value.filter(thread => thread.path && !(diff.value?.files || []).some(file => file.path === thread.path || file.oldPath === thread.path)))
 const hasDrafts = computed(() => threads.value.some(thread => thread.messages.some(message => !message.published)))
+const noCommentThreads: Thread[] = []
+const commentThreadsByPath = computed(() => {
+  const grouped = new Map<string, Thread[]>()
+  for (const thread of threads.value) {
+    if (!thread.path || thread.line === null) continue
+    const fileThreads = grouped.get(thread.path) ?? []
+    fileThreads.push(thread)
+    grouped.set(thread.path, fileThreads)
+  }
+  return grouped
+})
+const commentCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const thread of threads.value) if (thread.path) counts.set(thread.path, (counts.get(thread.path) ?? 0) + thread.messages.length)
+  return counts
+})
+function commentCount(file: DiffFile) {
+  return (commentCounts.value.get(file.path) ?? 0) + (file.oldPath && file.oldPath !== file.path ? commentCounts.value.get(file.oldPath) ?? 0 : 0)
+}
+const navigationVersions = ref<Record<string, number>>({})
+const currentThread = ref('')
+const navigationThreads = computed(() => {
+  const files = diff.value?.files ?? []
+  const order = new Map<string, number>()
+  files.forEach((file, index) => { order.set(file.path, index); if (file.oldPath) order.set(file.oldPath, index) })
+  return [...threads.value].sort((a, b) =>
+    (order.get(a.path) ?? (files.length + (a.path ? 0 : 1))) - (order.get(b.path) ?? (files.length + (b.path ? 0 : 1))) ||
+    a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0))
+})
+const currentThreadIndex = computed(() => navigationThreads.value.findIndex(thread => thread.id === currentThread.value))
 function unplacedFileThreads(file: DiffFile) {
   const lines = parsed.value.get(file.path) || []
   return threads.value.filter(thread => (thread.path === file.path || thread.path === file.oldPath) &&
@@ -372,6 +405,39 @@ function jump(path: string) {
   if (collapsed.value.has(path)) toggle(path)
   requestAnimationFrame(() => document.getElementById(`file-${path}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
+async function navigateThread(direction: number) {
+  const list = navigationThreads.value
+  if (!list.length) return
+  const index = currentThreadIndex.value < 0 ? (direction > 0 ? 0 : list.length - 1) : (currentThreadIndex.value + direction + list.length) % list.length
+  const thread = list[index]
+  currentThread.value = thread.id
+  if (view.value !== 'discussions') {
+    view.value = thread.path ? 'changes' : 'discussions'
+    if (thread.path) {
+      search.value = ''
+      const file = diff.value?.files.find(item => item.path === thread.path || item.oldPath === thread.path)
+      if (file) {
+        if (collapsed.value.has(file.path)) toggle(file.path)
+        closedDiffFolds.value.delete(file.contextId)
+        navigationVersions.value = { ...navigationVersions.value, [file.path]: (navigationVersions.value[file.path] ?? 0) + 1 }
+      }
+    }
+  }
+  await nextTick()
+  const find = () => document.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(thread.id)}"]`)
+  let target = find()
+  if (!target && view.value !== 'discussions') {
+    view.value = 'discussions'
+    await nextTick()
+    target = find()
+  }
+  if (target?.matches('button.resolved-thread-icon, button.resolved-thread-summary')) {
+    target.click()
+    await nextTick()
+    target = find()
+  }
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 function lineThreads(path: string, line: DiffLine) {
   return threads.value.filter(thread => thread.path === path && (thread.side === 'old' ? line.oldLine === thread.line : line.newLine === thread.line))
 }
@@ -460,8 +526,11 @@ async function closeReview(keep: boolean) {
   } catch (e) { report(e) } finally { busy.value = false }
 }
 onMounted(async () => {
-  let saved: { split?: boolean; wrap?: boolean; tree?: boolean; sidebarWidth?: number; view?: 'changes' | 'discussions' | 'file'; path?: string; scrollX?: number; scrollY?: number } = {}
+  let saved: { split?: boolean; wrap?: boolean; tree?: boolean; sidebarWidth?: number; view?: 'changes' | 'discussions' | 'file'; path?: string; mode?: Mode; reference?: string; launchBase?: string | null; scrollX?: number; scrollY?: number } = {}
   try { saved = JSON.parse(sessionStorage.getItem(stateKey) || '{}') } catch { /* Ignore invalid saved state. */ }
+  const comparison = restoreComparison(saved, launchBase)
+  mode.value = comparison.mode
+  reference.value = comparison.reference
   split.value = saved.split === true
   wrap.value = saved.wrap === true
   tree.value = saved.tree !== false
@@ -499,6 +568,11 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
 <template>
   <header class="topbar"><div class="brand"><span class="brand-mark">◈</span> {{ t('appTitle') }}</div><span v-if="diff" class="repo-path" :title="diff.root">{{ diff.root }}</span><button v-if="!closed" type="button" :aria-label="t('tourOpen')" :title="t('tourOpen')" @click="startTour">?</button><button v-if="!closed && hasDrafts" class="primary" :disabled="busy" @click="completeReview">{{ t('completeReview') }}</button><details class="close-menu"><summary>{{ t('closeReview') }}</summary><div class="close-panel"><p>{{ t('keepMarkdown') }}</p><div class="actions"><button :disabled="busy" @click="closeReview(true)">{{ t('keep') }}</button><button class="danger" :disabled="busy" @click="closeReview(false)">{{ t('delete') }}</button></div></div></details></header>
   <SelectionSearch v-if="!closed" @selection="selectedText = $event" />
+  <div v-if="!closed && navigationThreads.length" class="comment-navigation" :class="{ 'with-selection': selectedText }" role="group" :aria-label="t('commentNavigation')">
+    <span aria-live="polite">{{ currentThreadIndex + 1 }} / {{ navigationThreads.length }}</span>
+    <button type="button" :aria-label="t('previousComment')" :title="t('previousComment')" @click="navigateThread(-1)">↑</button>
+    <button type="button" :aria-label="t('nextComment')" :title="t('nextComment')" @click="navigateThread(1)">↓</button>
+  </div>
   <IgnoreWarning v-if="!closed" />
   <Walkthrough v-if="!closed && tourOpen" @close="tourOpen = false" />
   <main v-if="!closed">
@@ -510,7 +584,7 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
     <div class="tabs"><button class="text-button" :class="{ 'active-tab': view === 'changes' }" @click="view = 'changes'">{{ t('changes') }} <span class="count">{{ diff?.files.length || 0 }}</span></button><button class="text-button" :class="{ 'active-tab': view === 'discussions' }" @click="view = 'discussions'">{{ t('discussions') }} <span class="count">{{ threads.length }}</span></button><button v-if="view !== 'discussions'" class="general-discussion-button" @click="view = 'discussions'; composingGeneral = true">+ {{ t('newDiscussion') }}</button></div>
     <div v-if="error" class="error" role="alert"><span>{{ error }}</span><button :aria-label="t('dismissMessage')" @click="error = ''">×</button></div>
     <div v-if="comparisonWarning" class="error" role="status"><span>{{ comparisonWarning }}</span><button :aria-label="t('dismissMessage')" @click="comparisonWarning = ''">×</button></div>
-    <div v-if="view === 'changes'" class="toolbar">
+    <div v-show="view === 'changes'" class="toolbar">
       <form class="comparison" @submit.prevent="loadDiff()"><label for="mode">{{ t('compare') }}</label><select id="mode" v-model="mode" @change="changeMode"><option value="working">{{ t('localChanges') }}</option><option value="upstream">{{ t('unpushedChanges') }}</option><option value="branch">{{ t('sinceBranch') }}</option><option value="ref">{{ t('fromReference') }}</option></select><template v-if="mode === 'ref' || mode === 'branch'"><label class="sr-only" for="reference">{{ t('gitReference') }}</label><input id="reference" v-model="reference" :placeholder="t('referencePlaceholder')" :required="mode === 'ref'"><button>{{ t('compare') }}</button></template></form>
       <div class="summary"><span>{{ t('filesCount', { count: diff?.files.length || 0 }) }}</span> <b class="added">+{{ totals.additions }}</b> <b class="removed">−{{ totals.deletions }}</b><div class="view-switch" :aria-label="t('diffView')"><button :class="{ selected: !split }" :aria-pressed="!split" @click="split = false">{{ t('unified') }}</button><button :class="{ selected: split }" :aria-pressed="split" @click="split = true">{{ t('sideBySide') }}</button></div><button :class="{ selected: wrap }" :aria-pressed="wrap" @click="wrap = !wrap">{{ t('wrapLines') }}</button><button :disabled="loading" :aria-label="t('refreshChanges')" :title="t('refreshChanges')" @click="refresh">↻</button></div>
     </div>
@@ -518,8 +592,8 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
       <aside v-if="view === 'changes'" class="sidebar" :aria-label="t('fileNavigation')">
         <div class="sidebar-title"><strong>{{ t('files') }} <span class="count">{{ diff?.files.length || 0 }}</span></strong><div class="view-switch"><button :class="{ selected: !tree }" :aria-label="t('listView')" :aria-pressed="!tree" @click="tree = false">☰</button><button :class="{ selected: tree }" :aria-label="t('treeView')" :aria-pressed="tree" @click="tree = true">⊞</button></div></div>
         <label class="sr-only" for="search">{{ t('searchChangedFiles') }}</label><input id="search" v-model="search" class="search" :placeholder="t('searchFilesPlaceholder')">
-        <nav v-if="tree" :aria-label="t('changedFiles')"><div v-for="[dir, files] in groups" :key="dir" class="file-group"><div class="directory" :title="dir"><FileIcon directory /><span class="directory-prefix">{{ dir.slice(0, -16) }}</span><span class="directory-suffix">{{ dir.slice(-16) }}</span></div><button v-for="file in files" :key="file.path" class="file-link nested" :class="{ reviewed: reviewed[file.path] === file.contextId, 'active-file': activeFile === file.path }" :aria-current="activeFile === file.path ? 'location' : undefined" @click="jump(file.path)"><span class="file-name"><FileIcon :path="file.path" /> {{ file.path.split('/').pop() }} <span v-if="selectionCounts[file.path]" class="selection-count" :title="t('selectionOccurrences', { count: selectionCounts[file.path] })">{{ selectionCounts[file.path] }}</span></span><span class="file-stats"><span class="added">+{{ file.additions }}</span> <span class="removed">−{{ file.deletions }}</span></span></button></div></nav>
-        <nav v-else :aria-label="t('changedFiles')"><button v-for="file in filteredFiles" :key="file.path" class="file-link" :class="{ reviewed: reviewed[file.path] === file.contextId, 'active-file': activeFile === file.path }" :aria-current="activeFile === file.path ? 'location' : undefined" @click="jump(file.path)"><span class="file-name"><FileIcon :path="file.path" /> {{ file.path }} <span v-if="selectionCounts[file.path]" class="selection-count" :title="t('selectionOccurrences', { count: selectionCounts[file.path] })">{{ selectionCounts[file.path] }}</span></span><span class="file-stats"><span class="added">+{{ file.additions }}</span> <span class="removed">−{{ file.deletions }}</span></span></button></nav>
+        <nav v-if="tree" :aria-label="t('changedFiles')"><div v-for="[dir, files] in groups" :key="dir" class="file-group"><div class="directory" :title="dir"><FileIcon directory /><span class="directory-prefix">{{ dir.slice(0, -16) }}</span><span class="directory-suffix">{{ dir.slice(-16) }}</span></div><button v-for="file in files" :key="file.path" class="file-link nested" :class="{ reviewed: reviewed[file.path] === file.contextId, 'active-file': activeFile === file.path }" :aria-current="activeFile === file.path ? 'location' : undefined" @click="jump(file.path)"><span class="file-name"><FileIcon :path="file.path" /> {{ file.path.split('/').pop() }} <span v-if="selectionCounts[file.path]" class="selection-count" :title="t('selectionOccurrences', { count: selectionCounts[file.path] })">{{ selectionCounts[file.path] }}</span><span v-if="commentCount(file)" class="comment-count" :title="t('fileComments', { count: commentCount(file) })" :aria-label="t('fileComments', { count: commentCount(file) })"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v8H7l-3 2v-2H2z" /></svg>{{ commentCount(file) }}</span></span><span class="file-stats"><span class="added">+{{ file.additions }}</span> <span class="removed">−{{ file.deletions }}</span></span></button></div></nav>
+        <nav v-else :aria-label="t('changedFiles')"><button v-for="file in filteredFiles" :key="file.path" class="file-link" :class="{ reviewed: reviewed[file.path] === file.contextId, 'active-file': activeFile === file.path }" :aria-current="activeFile === file.path ? 'location' : undefined" @click="jump(file.path)"><span class="file-name"><FileIcon :path="file.path" /> {{ file.path }} <span v-if="selectionCounts[file.path]" class="selection-count" :title="t('selectionOccurrences', { count: selectionCounts[file.path] })">{{ selectionCounts[file.path] }}</span><span v-if="commentCount(file)" class="comment-count" :title="t('fileComments', { count: commentCount(file) })" :aria-label="t('fileComments', { count: commentCount(file) })"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v8H7l-3 2v-2H2z" /></svg>{{ commentCount(file) }}</span></span><span class="file-stats"><span class="added">+{{ file.additions }}</span> <span class="removed">−{{ file.deletions }}</span></span></button></nav>
         <p v-if="!filteredFiles.length" class="muted">{{ t('noFiles') }}</p>
         <form class="open-file" @submit.prevent="openFile()"><label for="file-path"><strong>{{ t('openAFile') }}</strong></label><p>{{ t('browseFiles') }}</p><input id="file-path" v-model="filePath" :placeholder="t('pathPlaceholder')" required><button>{{ t('openFile') }}</button></form>
         <form class="open-file" @submit.prevent="searchCode"><label for="code-query"><strong>{{ t('searchCode') }}</strong></label><p>{{ t('searchRepository') }}</p><input id="code-query" v-model="codeQuery" :placeholder="t('searchPlaceholder')" required><button :disabled="searching">{{ t(searching ? 'searching' : 'search') }}</button></form>
@@ -533,7 +607,7 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
           <div class="diff-scroll" @pointercancel.capture="commentDragging = false">
             <template v-for="(text, index) in openedLines" :key="index">
               <template v-if="!hiddenFold(index, openedFolds, start => closedOpenedFolds.has(start))">
-              <div :id="`opened-line-${index + 1}`" class="code-row context" :class="{ 'range-selected': selectedComment(openedFile.path, index + 1, 'new') }" :data-comment-path="openedFile.path" :data-new-line="index + 1">
+              <div :id="`opened-line-${index + 1}`" class="code-row context" :class="[{ 'range-selected': selectedComment(openedFile.path, index + 1, 'new') }, commentLineClasses(commentThreadsByPath.get(openedFile.path) ?? noCommentThreads, undefined, index + 1)]" :data-comment-path="openedFile.path" :data-new-line="index + 1">
                 <button v-if="openedFolds.has(index)" type="button" class="fold-toggle" :aria-expanded="!closedOpenedFolds.has(index)" :aria-label="t(closedOpenedFolds.has(index) ? 'expandFold' : 'collapseFold', { line: index + 1 })" @click="toggleFold(closedOpenedFolds, index)">{{ closedOpenedFolds.has(index) ? '▸' : '▾' }}</button><span v-else class="fold-spacer"></span>
                 <button class="line-number comment-trigger" data-comment-side="new" :aria-label="t('commentOnLine', { line: index + 1 })" :aria-pressed="selectedComment(openedFile.path, index + 1, 'new')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startCommentDrag($event, openedFile.path, index + 1, 'new')" @pointermove="moveCommentDrag" @pointerup="endCommentDrag" @pointercancel="commentDrag = null" @click="beginComment(openedFile.path, index + 1, 'new', $event)">{{ index + 1 }}</button><CodeText :path="openedFile.path" :text="text" />
               </div>
@@ -552,11 +626,11 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
           <ThreadView v-for="thread in unplacedFileThreads(file)" :key="thread.id" :thread="thread" show-location @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
           <div v-if="!collapsed.has(file.path)" class="diff-scroll" :class="{ 'wrap-lines': wrap }" @pointercancel.capture="commentDragging = false">
             <p v-if="file.binary" class="empty">{{ t('binaryFile') }}</p><p v-else-if="!parsed.get(file.path)?.length" class="empty">{{ t('noTextDiff') }}</p>
-            <SplitDiff v-else-if="split" :key="file.contextId" :path="file.path" :lines="parsed.get(file.path) || []" :inline-changes="inlineByFile.get(file.path)" :threads="threads" :wrap="wrap" @expand="expandGap(file, $event.key, $event.direction)" @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
+            <SplitDiff v-else-if="split" :key="file.contextId" :path="file.path" :lines="parsed.get(file.path) || []" :inline-changes="inlineByFile.get(file.path)" :navigation-version="navigationVersions[file.path]" :threads="threads" :wrap="wrap" @expand="expandGap(file, $event.key, $event.direction)" @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
             <div v-else class="unified-lines">
               <template v-for="(line, index) in parsed.get(file.path)" :key="line.key">
                 <template v-if="!hiddenFold(index, diffFolds.get(file.contextId) || new Map(), start => closedDiffFolds.get(file.contextId)?.has((parsed.get(file.path) || [])[start].key) ?? false)">
-                <div :class="['code-row', line.kind, { 'range-selected': selectedComment(file.path, line.oldLine, 'old') || selectedComment(file.path, line.newLine, 'new') }]" :data-comment-path="file.path" :data-old-line="line.oldLine" :data-new-line="line.newLine">
+                <div :class="['code-row', line.kind, { 'range-selected': selectedComment(file.path, line.oldLine, 'old') || selectedComment(file.path, line.newLine, 'new') }, commentLineClasses(commentThreadsByPath.get(file.path) ?? noCommentThreads, line.oldLine, line.newLine)]" :data-comment-path="file.path" :data-old-line="line.oldLine" :data-new-line="line.newLine">
                   <ContextGap v-if="line.kind === 'gap'" :busy="loadingContext.has(file.contextId)" @expand="expandGap(file, line.key, $event)" />
                   <template v-else-if="line.kind === 'hunk' || line.kind === 'meta'"><span class="gutter"></span><code>{{ line.text }}</code></template>
                   <template v-else>
@@ -579,7 +653,7 @@ onUnmounted(() => { window.removeEventListener('pagehide', saveView); window.rem
           <ThreadView v-for="thread in orphanedThreads" :key="thread.id" :thread="thread" show-location @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" />
         </section>
         </template>
-        <section v-if="view === 'discussions'" id="discussions" class="discussions"><h2>{{ t('discussions') }} <span class="count">{{ threads.length }}</span></h2><p class="muted">{{ t('discussionsDescription') }}</p><button v-if="!composingGeneral" @click="composingGeneral = true">{{ t('newDiscussion') }}</button><form v-else class="composer general-composer" @submit.prevent="saveGeneralComment()"><textarea v-model="generalComment" :aria-label="t('newDiscussion')" :placeholder="t('writeComment')" rows="3" autofocus></textarea><div class="actions"><button class="primary" :disabled="busy || !generalComment.trim()">{{ t('addToReview') }}</button><button type="button" :disabled="busy || !generalComment.trim()" @click="saveGeneralComment(true)">{{ t('sendNow') }}</button><button type="button" :disabled="busy" @click="composingGeneral = false">{{ t('cancel') }}</button></div></form><p v-if="!threads.length" class="muted">{{ t('noDiscussions') }}</p><div v-for="thread in threads" :key="thread.id" class="discussion-item"><div v-if="!thread.path" class="discussion-location">{{ t('generalDiscussion') }}</div><ThreadView :thread="thread" @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" /></div></section>
+        <section v-if="view === 'discussions'" id="discussions" class="discussions"><h2>{{ t('discussions') }} <span class="count">{{ threads.length }}</span></h2><p class="muted">{{ t('discussionsDescription') }}</p><button v-if="!composingGeneral" @click="composingGeneral = true">{{ t('newDiscussion') }}</button><form v-else class="composer general-composer" @submit.prevent="saveGeneralComment()"><textarea v-model="generalComment" :aria-label="t('newDiscussion')" :placeholder="t('writeComment')" rows="3" autofocus></textarea><div class="actions"><button class="primary" :disabled="busy || !generalComment.trim()">{{ t('addToReview') }}</button><button type="button" :disabled="busy || !generalComment.trim()" @click="saveGeneralComment(true)">{{ t('sendNow') }}</button><button type="button" :disabled="busy" @click="composingGeneral = false">{{ t('cancel') }}</button></div></form><p v-if="!threads.length" class="muted">{{ t('noDiscussions') }}</p><div v-for="thread in threads" :key="thread.id" class="discussion-item"><div v-if="!thread.path" class="discussion-location">{{ t('generalDiscussion') }}</div><ThreadView :thread="thread" collapse-resolved @changed="loadThreads" @error="error = $event" @open-file="openFile($event)" /></div></section>
       </div>
     </div>
   </main><main v-else class="closed"><h1>{{ t('reviewClosed') }}</h1><p>{{ t('closeTab') }}</p></main>

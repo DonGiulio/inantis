@@ -5,10 +5,12 @@ import CodeText from './CodeText.vue'
 import ThreadView from './ThreadView.vue'
 import ContextGap from './ContextGap.vue'
 import { findFolds } from './folding'
+import { commentLineClasses } from './comment-highlights'
 import type { ChangeRange } from './inline-diff'
 import type { DiffLine, Thread } from './types'
 
-const props = defineProps<{ path: string; lines: DiffLine[]; threads: Thread[]; wrap?: boolean; inlineChanges?: Map<string, ChangeRange[]> }>()
+const props = defineProps<{ path: string; lines: DiffLine[]; threads: Thread[]; wrap?: boolean; inlineChanges?: Map<string, ChangeRange[]>; navigationVersion?: number }>()
+const commentThreads = computed(() => props.threads.filter(thread => thread.path === props.path && thread.line !== null))
 const emit = defineEmits<{ changed: []; error: [message: string]; openFile: [path: string]; expand: [value: { key: string; direction: 'top' | 'bottom' | 'all' }] }>()
 type Row = { key: string; header?: DiffLine; old?: DiffLine; new?: DiffLine }
 const rows = computed<Row[]>(() => {
@@ -77,6 +79,7 @@ function toggleFold(key: string) {
   if (closedFolds.value.has(key)) closedFolds.value.delete(key); else closedFolds.value.add(key)
 }
 watch(() => props.path, () => { closedFolds.value = new Set() })
+watch(() => props.navigationVersion, () => { closedFolds.value = new Set() })
 const view = ref<HTMLElement | null>(null)
 const scrollbar = ref<HTMLElement | null>(null)
 const scrollOffset = ref(0)
@@ -210,8 +213,8 @@ async function save(published = false) {
       <div v-if="row.header" :class="['split-header', row.header.kind]"><ContextGap v-if="row.header.kind === 'gap'" @expand="emit('expand', { key: row.header!.key, direction: $event })" /><template v-else>{{ row.header.text }}</template></div>
       <div v-else class="split-row">
         <button v-if="folds.has(index)" type="button" class="fold-toggle split-fold-toggle" :aria-expanded="!closedFolds.has(row.key)" :aria-label="t(closedFolds.has(row.key) ? 'expandFold' : 'collapseFold', { line: row.new?.newLine ?? row.old?.oldLine ?? 0 })" @click="toggleFold(row.key)">{{ closedFolds.has(row.key) ? '▸' : '▾' }}</button>
-        <div :class="['split-cell', row.old?.kind || 'blank', { 'range-selected': selected(row.old?.oldLine, 'old') }]" data-side="old" :data-line="row.old?.oldLine"><button class="line-number comment-trigger" :disabled="row.old?.oldLine === undefined" :aria-label="row.old?.oldLine === undefined ? t('noOldLine') : t('commentOnOldLine', { line: row.old.oldLine })" :aria-pressed="selected(row.old?.oldLine, 'old')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startDrag($event, row.old?.oldLine, 'old')" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="drag = null" @click="begin(row.old?.oldLine, 'old', $event)">{{ row.old?.oldLine }}</button><span class="sign">{{ row.old?.kind === 'deletion' ? '−' : '' }}</span><CodeText v-if="row.old" :path="path" :text="row.old.text" :changes="inlineChanges?.get(row.old.key)" /></div>
-        <div :class="['split-cell', row.new?.kind || 'blank', { 'range-selected': selected(row.new?.newLine, 'new') }]" data-side="new" :data-line="row.new?.newLine"><button class="line-number comment-trigger" :disabled="row.new?.newLine === undefined" :aria-label="row.new?.newLine === undefined ? t('noNewLine') : t('commentOnNewLine', { line: row.new.newLine })" :aria-pressed="selected(row.new?.newLine, 'new')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startDrag($event, row.new?.newLine, 'new')" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="drag = null" @click="begin(row.new?.newLine, 'new', $event)">{{ row.new?.newLine }}</button><span class="sign">{{ row.new?.kind === 'addition' ? '+' : '' }}</span><CodeText v-if="row.new" :path="path" :text="row.new.text" :changes="inlineChanges?.get(row.new.key)" /></div>
+        <div :class="['split-cell', row.old?.kind || 'blank', { 'range-selected': selected(row.old?.oldLine, 'old') }, commentLineClasses(commentThreads, row.old?.oldLine)]" data-side="old" :data-line="row.old?.oldLine"><button class="line-number comment-trigger" :disabled="row.old?.oldLine === undefined" :aria-label="row.old?.oldLine === undefined ? t('noOldLine') : t('commentOnOldLine', { line: row.old.oldLine })" :aria-pressed="selected(row.old?.oldLine, 'old')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startDrag($event, row.old?.oldLine, 'old')" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="drag = null" @click="begin(row.old?.oldLine, 'old', $event)">{{ row.old?.oldLine }}</button><span class="sign">{{ row.old?.kind === 'deletion' ? '−' : '' }}</span><CodeText v-if="row.old" :path="path" :text="row.old.text" :changes="inlineChanges?.get(row.old.key)" /></div>
+        <div :class="['split-cell', row.new?.kind || 'blank', { 'range-selected': selected(row.new?.newLine, 'new') }, commentLineClasses(commentThreads, undefined, row.new?.newLine)]" data-side="new" :data-line="row.new?.newLine"><button class="line-number comment-trigger" :disabled="row.new?.newLine === undefined" :aria-label="row.new?.newLine === undefined ? t('noNewLine') : t('commentOnNewLine', { line: row.new.newLine })" :aria-pressed="selected(row.new?.newLine, 'new')" title="Click to comment; Shift-click or drag to select a range" @pointerdown="startDrag($event, row.new?.newLine, 'new')" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="drag = null" @click="begin(row.new?.newLine, 'new', $event)">{{ row.new?.newLine }}</button><span class="sign">{{ row.new?.kind === 'addition' ? '+' : '' }}</span><CodeText v-if="row.new" :path="path" :text="row.new.text" :changes="inlineChanges?.get(row.new.key)" /></div>
       </div>
       <div v-if="closedFolds.has(row.key) && folds.has(index)" class="fold-summary">{{ t('hiddenFoldLines', { count: folds.get(index)! - index }) }}</div>
       <div class="split-threads">
