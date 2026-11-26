@@ -98,10 +98,10 @@ test('legacy messages and published root Markdown remain usable', () => {
     const thread = store.create({ path: '', line: null, side: 'new', body: 'legacy question' });
     store.publish(thread.id);
     const original = store.markdownPath();
-    const legacy = join(realpathSync(root), basename(original));
+    const legacy = join(realpathSync.native(root), basename(original));
     renameSync(original, legacy);
     store.dispose();
-    const key = createHash('sha256').update(realpathSync(root)).digest('hex');
+    const key = createHash('sha256').update(realpathSync.native(root)).digest('hex');
     const db = new DatabaseSync(join(homedir(), '.agentic-change-reviewer', `${key}.sqlite`));
     try {
       const row = db.prepare('SELECT threads FROM review WHERE singleton = 1').get() as { threads: string };

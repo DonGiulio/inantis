@@ -54,7 +54,7 @@ test('legacy single-line anchors remain valid and old-side ranges remain stale',
   try {
     store.create({ path: 'code.ts', line: 2, side: 'new', body: 'legacy' });
     store.dispose();
-    const key = createHash('sha256').update(realpathSync(root)).digest('hex');
+    const key = createHash('sha256').update(realpathSync.native(root)).digest('hex');
     const db = new DatabaseSync(join(homedir(), '.agentic-change-reviewer', `${key}.sqlite`));
     try {
       const row = db.prepare('SELECT threads FROM review WHERE singleton = 1').get() as { threads: string };
