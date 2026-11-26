@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -116,6 +116,7 @@ test('stream patches and counts match direct git output for renames, binary, mod
     writeFileSync(join(root, 'text.txt'), 'a\nc\nd\n');
     git('mv', 'old.txt', 'new.txt');
     writeFileSync(join(root, 'bin.dat'), Buffer.from([0, 1, 3]));
+    if (process.platform !== 'win32') chmodSync(join(root, 'mode.sh'), 0o755);
     git('update-index', '--chmod=+x', 'mode.sh');
     writeFileSync(join(root, 'untracked.txt'), 'x\ny\n');
 

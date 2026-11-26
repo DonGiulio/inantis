@@ -17,7 +17,7 @@ if (!root) {
 const git = (...args: string[]) =>
   execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 26 });
 
-const files: { path: string; status: string; patch: string; additions: number }[] = [];
+const files: { path: string; oldPath?: string; status: string; patch: string; additions: number }[] = [];
 let base = '';
 for await (const event of streamDiff(root, 'working')) {
   if (event.type === 'metadata') base = event.base;
@@ -47,10 +47,10 @@ for (const file of files) {
 
   if (!untrackedSet.has(file.path)) {
     // Tracked and staged files, including staged additions, are compared against `git diff <base>`.
-    const pathspec = `:(literal)${file.path}`;
-    const expected = git('diff', '--no-ext-diff', '--no-textconv', '--find-renames', base, '--', pathspec);
+    const pathspecs = (file.oldPath ? [file.oldPath, file.path] : [file.path]).map(path => `:(literal)${path}`);
+    const expected = git('diff', '--no-ext-diff', '--no-textconv', '--find-renames', base, '--', ...pathspecs);
     if (expected !== file.patch) problems.push(`patch differs: ${file.path}`);
-    const numstat = git('diff', '--numstat', '--no-ext-diff', '--no-textconv', base, '--', pathspec).trim().split('\t');
+    const numstat = git('diff', '--numstat', '--no-ext-diff', '--no-textconv', '--find-renames', base, '--', ...pathspecs).trim().split('\t');
     if (numstat[0] !== '-' && Number(numstat[0]) !== file.additions) problems.push(`additions differ: ${file.path}`);
   } else if (lstatSync(join(root, file.path)).isSymbolicLink()) {
     // An untracked symlink is diffed as its target text, even when the target does not exist.
