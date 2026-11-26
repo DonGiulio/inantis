@@ -144,20 +144,6 @@ test('CLI lists published context and writes agent replies without exposing draf
   const cli = fileURLToPath(new URL('../src/server/cli.ts', import.meta.url));
   const run = (...args: string[]) => execFileSync(process.execPath, ['--import', import.meta.resolve('tsx'), cli, '--comments-dir', directory, ...args], { cwd: root, encoding: 'utf8' });
   try {
-    if (process.platform === 'win32') {
-      const canonical = realpathSync(root);
-      const parent = { root, canonical, home: homedir(), key: createHash('sha256').update(canonical).digest('hex') };
-      const child = execFileSync(process.execPath, ['-e', `
-        const { execFileSync } = require('node:child_process');
-        const { realpathSync } = require('node:fs');
-        const { homedir } = require('node:os');
-        const { createHash } = require('node:crypto');
-        const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trimEnd();
-        const canonical = realpathSync(root);
-        console.log(JSON.stringify({ root, canonical, home: homedir(), key: createHash('sha256').update(canonical).digest('hex') }));
-      `], { cwd: root, encoding: 'utf8' });
-      console.log('Windows review database diagnostics:', JSON.stringify({ parent, child: JSON.parse(child) }));
-    }
     const thread = store.create({ path: '', line: null, side: 'new', body: 'question' });
     store.publish(thread.id);
     store.reply(thread.id, 'private draft');

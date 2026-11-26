@@ -29,6 +29,5 @@ jobs:
           -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force | Out-Null
       - run: npm ci
       - run: npm test
-        timeout-minutes: 3
       - run: npm run build
       - run: npm audit
