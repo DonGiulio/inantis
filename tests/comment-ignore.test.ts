@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getCommentIgnoreStatus } from '../src/server/comment-ignore.js';
 
-test('reports git ignore rules, negations, and tracked review files', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'review-ignore-'));
+test('reports ignore status, portable paths, and Git errors', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'review-ignore-'));
+  const root = join(parent, 'repo');
+  mkdirSync(root);
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   try {
     git('init');
@@ -19,19 +21,21 @@ test('reports git ignore rules, negations, and tracked review files', async () =
     writeFileSync(join(root, ignored), 'review');
     git('add', '-f', ignored);
     assert.deepEqual(await getCommentIgnoreStatus(root, ignored), { path: ignored, ignored: true, tracked: true });
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
 
-test('checks nested ignore files and reports errors instead of treating them as unignored', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'review-ignore-nested-'));
-  try {
-    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
     mkdirSync(join(root, 'nested'));
     writeFileSync(join(root, 'nested', '.gitignore'), '*.md\n');
     assert.deepEqual(await getCommentIgnoreStatus(root, 'nested/review.md'), { path: 'nested/review.md', ignored: true, tracked: false });
     assert.deepEqual(await getCommentIgnoreStatus(root, '../outside.md'), { path: join(root, '../outside.md'), ignored: false, tracked: false });
-    const outside = mkdtempSync(join(tmpdir(), 'review-not-git-'));
-    try { await assert.rejects(getCommentIgnoreStatus(outside, 'review.md')); }
-    finally { rmSync(outside, { recursive: true, force: true }); }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+
+    assert.deepEqual(await getCommentIgnoreStatus(root, 'nested'), { path: 'nested', ignored: false, tracked: false });
+    assert.deepEqual(await getCommentIgnoreStatus(root, root), { path: root, ignored: false, tracked: false });
+    assert.deepEqual(await getCommentIgnoreStatus(root, '..'), { path: join(root, '..'), ignored: false, tracked: false });
+    assert.deepEqual(await getCommentIgnoreStatus(root, 'nested/../.agentic-review-new.md'), { path: '.agentic-review-new.md', ignored: true, tracked: true });
+    assert.deepEqual(await getCommentIgnoreStatus(root, ''), { path: root, ignored: false, tracked: false });
+    const outside = join(tmpdir(), 'review-output.md');
+    assert.deepEqual(await getCommentIgnoreStatus(root, outside), { path: outside, ignored: false, tracked: false });
+    const file = join(root, 'not-a-directory');
+    writeFileSync(file, 'file');
+    await assert.rejects(getCommentIgnoreStatus(file, 'review.md'));
+  } finally { rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });

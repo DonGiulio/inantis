@@ -54,7 +54,7 @@ test('legacy single-line anchors remain valid and old-side ranges remain stale',
   try {
     store.create({ path: 'code.ts', line: 2, side: 'new', body: 'legacy' });
     store.dispose();
-    const key = createHash('sha256').update(realpathSync(root)).digest('hex');
+    const key = createHash('sha256').update(realpathSync.native(root)).digest('hex');
     const db = new DatabaseSync(join(homedir(), '.agentic-change-reviewer', `${key}.sqlite`));
     try {
       const row = db.prepare('SELECT threads FROM review WHERE singleton = 1').get() as { threads: string };
@@ -68,5 +68,19 @@ test('legacy single-line anchors remain valid and old-side ranges remain stale',
     const old = store.create({ path: 'code.ts', line: 3, startLine: 1, side: 'old', body: 'old range' });
     assert.equal(old.stale, true);
     assert.equal(old.startLine, 1);
+  } finally { store.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('marks agent findings stale when no valid new-side anchor can be captured', () => {
+  const root = mkdtempSync(join(tmpdir(), 'review-agent-anchor-'));
+  writeFileSync(join(root, 'code.ts'), 'one\ntwo\n');
+  const store = new ReviewStore(root);
+  try {
+    assert.throws(() => store.createAsAgent({ path: 'missing.ts', line: 1, side: 'new', body: 'finding' }), /Cannot anchor/);
+    assert.throws(() => store.createAsAgent({ path: 'code.ts', line: 5, side: 'new', body: 'finding' }), /Cannot anchor/);
+    const old = store.createAsAgent({ path: 'missing.ts', startLine: 1, line: 2, side: 'old', body: 'old-side finding' });
+    assert.equal(old.stale, true);
+    assert.equal(old.startLine, 1);
+    assert.equal(store.list().length, 1);
   } finally { store.dispose(); rmSync(root, { recursive: true, force: true }); }
 });

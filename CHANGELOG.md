@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Skip untracked nested Git repositories instead of failing the diff with "Unexpected git numstat output".
+- Load diffs faster: up to 8 files are read concurrently and still listed in order (about 5x faster on a 260-file repository).
+- Read each file's patch and line counts with one Git call instead of two.
+
 ## 0.1.3
 
 - Navigate between discussions and see comment counts beside changed files.

@@ -53,7 +53,7 @@ export class ReviewStore {
   private closed = false;
 
   constructor(root: string, commentsDir?: string) {
-    this.root = realpathSync(root);
+    this.root = realpathSync.native(root);
     if (commentsDir !== undefined && !commentsDir.trim()) throw new Error('Comments directory must not be empty');
     const requested = resolve(this.root, commentsDir ?? '.agentic-change-reviewer');
     // Canonicalize the nearest existing ancestor so an explicitly chosen external

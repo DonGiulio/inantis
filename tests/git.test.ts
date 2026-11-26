@@ -20,6 +20,9 @@ test('compares the working tree with HEAD including staged, unstaged and untrack
     assert.deepEqual(result.files.map(f => f.path).sort(), ['file name.txt', 'new file.txt']);
     assert.match(result.files.find(f => f.path === 'file name.txt')!.patch, /\+working/);
     assert.match(result.files.find(f => f.path === 'new file.txt')!.patch, /\+new/);
+    await assert.rejects(() => getDiff(join(root, 'missing'), 'working'));
+    await assert.rejects(() => getDiff(root, 'unknown' as 'working'), /Unknown diff mode/);
+    await assert.rejects(() => getDiff(root, 'ref'), /reference is required/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -51,6 +54,20 @@ test('does not use an empty tree for an unpushed branch with a known origin', as
     const result = await getDiff(root, 'branch');
     assert.deepEqual(result.files.map(file => file.path), ['feature.txt']);
     await assert.rejects(() => getDiff(root, 'upstream'), /upstream/i);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('compares an unborn repository against the empty tree', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'review-unborn-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  try {
+    git('init');
+    writeFileSync(join(root, 'first.txt'), 'first\n');
+    const result = await getDiff(root, 'working');
+    assert.equal(result.baseIsEmpty, true);
+    assert.equal(result.baseLabel, undefined);
+    assert.deepEqual(result.files.map(file => file.path), ['first.txt']);
+    assert.equal(result.files[0].uncommitted, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

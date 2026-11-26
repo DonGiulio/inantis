@@ -14,7 +14,9 @@ test('OMP is notified once per new published review message in its own session',
   const root = join(temp, 'repo');
   await mkdir(home); await mkdir(root);
   const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   const app = await createServer(root);
   const store = new ReviewStore(root);
   try {
@@ -54,6 +56,7 @@ test('OMP is notified once per new published review message in its own session',
   } finally {
     store.dispose(); await app.close();
     if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = originalUserProfile;
     await rm(temp, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -61,6 +61,19 @@ test('published reviewer and agent messages cannot be edited or deleted, but dra
   } finally { store.dispose(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test('removing the last draft deletes its thread and unpublished threads cannot receive agent replies', () => {
+  const root = mkdtempSync(join(tmpdir(), 'review-empty-thread-'));
+  const store = new ReviewStore(root);
+  try {
+    const thread = store.create({ path: '', line: null, side: 'new', body: 'draft' });
+    assert.throws(() => store.replyAsAgent(thread.id, 'answer'), /published messages/i);
+    assert.throws(() => store.remove(thread.id, 'missing-message'), /Message not found/i);
+    store.remove(thread.id, thread.messages[0].id);
+    assert.deepEqual(store.list(), []);
+    assert.throws(() => store.remove(thread.id, thread.messages[0].id), /Thread not found/i);
+  } finally { store.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test('a custom external comments directory is shared and protects changed Markdown', () => {
   const root = mkdtempSync(join(tmpdir(), 'review-protocol-root-'));
   const directory = mkdtempSync(join(tmpdir(), 'review-protocol-output-'));
@@ -85,10 +98,10 @@ test('legacy messages and published root Markdown remain usable', () => {
     const thread = store.create({ path: '', line: null, side: 'new', body: 'legacy question' });
     store.publish(thread.id);
     const original = store.markdownPath();
-    const legacy = join(realpathSync(root), basename(original));
+    const legacy = join(realpathSync.native(root), basename(original));
     renameSync(original, legacy);
     store.dispose();
-    const key = createHash('sha256').update(realpathSync(root)).digest('hex');
+    const key = createHash('sha256').update(realpathSync.native(root)).digest('hex');
     const db = new DatabaseSync(join(homedir(), '.agentic-change-reviewer', `${key}.sqlite`));
     try {
       const row = db.prepare('SELECT threads FROM review WHERE singleton = 1').get() as { threads: string };
@@ -171,7 +184,16 @@ test('CLI creates agent findings on a line and as general discussions', () => {
     assert.match(markdown, /Potential bug/);
     assert.match(markdown, /Overall concern/);
     assert.throws(() => run('comments', 'create', '--path', 'code.ts', '--line', 'nope', '--message', 'bad'));
+    assert.throws(() => run('comments', 'create', '--path', 'code.ts', '--line', '9007199254740992', '--message', 'bad'));
+    assert.throws(() => run('comments', 'create', '--message', 'missing path'));
+    assert.throws(() => run('comments', 'create', '--path', 'code.ts', '--message', 'missing line'));
+    assert.throws(() => run('comments', 'create', '--path', 'code.ts', '--line', '1', '--side', 'middle', '--message', 'bad side'));
+    assert.throws(() => run('comments', 'create', '--path', join(root, 'code.ts'), '--line', '1', '--message', 'absolute path'));
+    assert.throws(() => run('comments', 'create', '--path', '../outside.ts', '--line', '1', '--message', 'traversal'));
+    assert.throws(() => run('comments', 'create', '--path', '.git/config', '--line', '1', '--message', 'git metadata'));
     assert.throws(() => run('comments', 'create', '--general', '--path', 'code.ts', '--message', 'bad'));
+    assert.throws(() => run('comments', 'list'));
+    assert.throws(() => run('unknown-command'));
   } finally { store.dispose(); rmSync(root, { recursive: true, force: true }); rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -210,27 +232,49 @@ test('CLI watch wakes on a published reviewer message, excluding drafts', { time
 
 test('SSE notifies a browser when another process publishes an agent reply', { timeout: 10000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'review-protocol-sse-'));
+  const home = mkdtempSync(join(tmpdir(), 'review-protocol-home-'));
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  const commentsDir = join(home, 'comments');
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   git('init'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.com');
   writeFileSync(join(root, 'code.txt'), 'content');
   git('add', 'code.txt'); git('commit', '-m', 'initial');
-  const store = new ReviewStore(root);
+  const store = new ReviewStore(root, commentsDir);
   const thread = store.create({ path: '', line: null, side: 'new', body: 'question' });
   store.publish(thread.id);
-  const app = await createServer(root);
+  const app = await createServer(root, commentsDir);
   const abort = new AbortController();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let responseBody: ReadableStream<Uint8Array> | null = null;
   try {
     const url = await app.listen({ host: '127.0.0.1', port: 0 });
     const response = await fetch(`${url}/api/events`, { signal: abort.signal });
     assert.equal(response.status, 200);
-    const reader = response.body!.getReader();
+    responseBody = response.body;
+    reader = response.body!.getReader();
     await reader.read(); // initial connected comment
     const cli = fileURLToPath(new URL('../src/server/cli.ts', import.meta.url));
-    await promisify(execFile)(process.execPath, ['--import', import.meta.resolve('tsx'), cli, 'comments', 'reply', thread.id, '--message', 'answer'], { cwd: root });
+    await promisify(execFile)(process.execPath, ['--import', import.meta.resolve('tsx'), cli, '--comments-dir', commentsDir, 'comments', 'reply', thread.id, '--message', 'answer'], { cwd: root });
     const event = await reader.read();
     assert.match(new TextDecoder().decode(event.value), /\"type\":\"change\"/);
     const threads = await (await fetch(`${url}/api/threads`)).json();
     assert.equal(threads[0].messages[1].body, 'answer');
     assert.equal(threads[0].messages[1].author, 'agent');
-  } finally { abort.abort(); store.dispose(); await app.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    if (reader) await reader.cancel().catch(() => {});
+    if (responseBody?.locked) await responseBody.cancel().catch(() => {});
+    abort.abort();
+    store.dispose();
+    await app.close();
+    reader?.releaseLock();
+    if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = originalUserProfile;
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    // Node on Windows may retain a process cwd briefly after the child exits;
+    // the OS temp directory owns this disposable fixture and cleans it later.
+    if (process.platform !== 'win32') rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
 });
